@@ -1,0 +1,264 @@
+ONOS + Mininet + RAVEN Architecture
+====================================
+
+┌────────────────────────────────────────────────────────────────────┐
+│                         Docker Compose Network                     │
+│                        (onos-mininet-net bridge)                   │
+│                                                                    │
+│  ┌────────────────────┐      ┌────────────────────┐                │
+│  │   ONOS Container   │      │  Mininet Container │                │
+│  │                    │      │                    │                │
+│  │  ┌──────────────┐  │      │  ┌──────────────┐  │                │
+│  │  │ ONOS Core    │  │      │  │ OVS Switches │  │                │
+│  │  │              │  │      │  │   s1, s2...  │  │                │
+│  │  │ - Topology   │  │      │  └──────┬───────┘  │                │
+│  │  │ - Flow Mgmt  │  │      │         │          │                │
+│  │  │ - REST API   │  │      │  ┌──────▼───────┐  │                │
+│  │  └──────┬───────┘  │      │  │ Virtual Hosts│  │                │
+│  │         │          │      │  │  h1, h2...   │  │                │
+│  │  ┌──────▼───────┐  │      │  └──────────────┘  │                │
+│  │  │ OpenFlow     │◄─┼──────┼──┐                 │                │
+│  │  │ Controller   │  │      │  │ OpenFlow        │                │
+│  │  │ Port: 6653   │  │      │  │ Protocol        │                │
+│  │  └──────────────┘  │      │  └─────────────────┘                │
+│  │                    │      │                    │                │
+│  │  ┌──────────────┐  │      │  Python Scripts:  │                 │
+│  │  │ REST API     │  │      │  - simple_topology.py               │
+│  │  │ Port: 8181   │◄─┼──┐   │  - tree_topology.py                 │
+│  │  └──────────────┘  │  │   │  - raven_test_topology.py           │
+│  │                    │  │   │  - custom_topology.py               │
+│  │  ┌──────────────┐  │  │   │                    │                │
+│  │  │ Web GUI      │  │  │   └────────────────────┘                │
+│  │  │ Port: 8181   │  │  │                                         │
+│  │  └──────────────┘  │  │                                         │
+│  └────────────────────┘  │   ┌────────────────────┐                │
+│           ▲              │   │ RAVEN Controller   │                │
+│           │              │   │                    │                │
+│           │              └───┤  ┌──────────────┐  │                │
+│           │                  │  │ RAVEN Logic  │  │                │
+│           │                  │  │              │  │                │
+│           │                  │  │ - Topology   │  │                │
+│           │                  │  │   Monitor    │  │                │
+│           │                  │  │ - Path       │  │                │
+│           │                  │  │   Scoring    │  │                │
+│           │                  │  │ - Flow       │  │                │
+│           └──────────────────┼──┤   Install    │  │                │
+│                REST API      │  └──────────────┘  │                │
+│                              │                    │                │
+│                              │  NetworkX Graph    │                │
+│                              │  Python 3.9        │                │
+│                              └────────────────────┘                │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ Port Mapping
+                                    ▼
+                          ┌──────────────────┐
+                          │   Host Machine   │
+                          │                  │
+                          │  localhost:8181  │ ─► ONOS GUI
+                          │  localhost:8101  │ ─► ONOS CLI
+                          │  localhost:6653  │ ─► OpenFlow
+                          └──────────────────┘
+
+
+Data Flow
+=========
+
+1. Topology Creation:
+   ┌─────────┐
+   │ Mininet │ Creates virtual network
+   └────┬────┘
+        │ OpenFlow Discovery
+        ▼
+   ┌─────────┐
+   │  ONOS   │ Discovers switches/links
+   └─────────┘
+
+2. RAVEN Path Selection:
+   ┌─────────┐
+   │  RAVEN  │ Queries topology
+   └────┬────┘
+        │ REST API (GET /devices, /links, /hosts)
+        ▼
+   ┌─────────┐
+   │  ONOS   │ Returns topology data
+   └────┬────┘
+        │
+        ▼
+   ┌─────────┐
+   │  RAVEN  │ Computes best paths using:
+   └─────────┘ - Reliability scores
+               - Bandwidth availability
+               - Hop count penalty
+        │
+        │ Selects optimal path
+        ▼
+   ┌─────────┐
+   │  RAVEN  │ Installs flow rules
+   └────┬────┘
+        │ REST API (POST /flows)
+        ▼
+   ┌─────────┐
+   │  ONOS   │ Installs flows on switches
+   └────┬────┘
+        │ OpenFlow FlowMod
+        ▼
+   ┌─────────┐
+   │ Mininet │ Traffic flows via selected path
+   └─────────┘
+
+3. Continuous Monitoring:
+   ┌─────────┐
+   │  RAVEN  │ Polls every 10 seconds
+   └────┬────┘
+        │
+        ├─► Detects topology changes
+        ├─► Recomputes paths
+        └─► Updates flow rules
+
+
+RAVEN Algorithm Flow
+====================
+
+For each host pair (src, dst):
+
+1. Find k shortest paths
+   └─► Uses NetworkX shortest_simple_paths()
+
+2. For each path, compute score:
+   ┌────────────────────────────────────────┐
+   │ Score = α×R + β×BW - γ×Hops           │
+   │                                        │
+   │ Where:                                 │
+   │   R  = Path reliability (0.0 - 1.0)   │
+   │   BW = Normalized bandwidth (0.0-1.0) │
+   │   Hops = Number of hops               │
+   │   α  = 0.6 (reliability weight)       │
+   │   β  = 0.4 (bandwidth weight)         │
+   │   γ  = 0.1 (hop penalty)              │
+   └────────────────────────────────────────┘
+
+3. Select path with highest score
+
+4. Install flow rules for selected path
+
+
+Path Reliability Calculation
+=============================
+
+For a path P = [n1, n2, n3, ..., nk]:
+
+Link Reliability:
+  R(link) = uptime / (uptime + downtime)
+  
+Path Reliability:
+  R(path) = R(link1) × R(link2) × ... × R(linkN)
+
+Example:
+  Path: h1 -> s1 -> s2 -> s3 -> h2
+  
+  R(h1-s1) = 0.95
+  R(s1-s2) = 0.90
+  R(s2-s3) = 0.98
+  R(s3-h2) = 0.95
+  
+  R(path) = 0.95 × 0.90 × 0.98 × 0.95 = 0.797
+
+
+Comparison: RAVEN vs Default Routing
+=====================================
+
+Scenario: Two paths from h1 to h2
+
+Path A: h1 -> s1 -> s2 -> s3 -> h2
+  - 4 hops
+  - 100 Mbps bandwidth
+  - 95% reliability
+
+Path B: h1 -> s1 -> s4 -> h2
+  - 3 hops (shorter!)
+  - 50 Mbps bandwidth
+  - 70% reliability
+
+Default ONOS (Shortest Path):
+  ✓ Selects Path B (fewer hops)
+  ✗ Ignores reliability
+  ✗ Ignores bandwidth
+
+RAVEN:
+  Path A Score = 0.6×0.95 + 0.4×1.0 - 0.1×4 = 0.97
+  Path B Score = 0.6×0.70 + 0.4×0.5 - 0.1×3 = 0.62
+  
+  ✓ Selects Path A (better reliability & bandwidth)
+  ✓ Considers multiple metrics
+  ✓ Adapts to network conditions
+
+
+Container Communication
+=======================
+
+All containers on same Docker network (onos-mininet-net):
+
+┌──────────┐
+│  onos    │ IP: 172.x.x.2
+└────┬─────┘
+     │
+     ├─────► Port 8181: REST API & GUI
+     ├─────► Port 6653: OpenFlow
+     └─────► Port 8101: SSH/CLI
+
+┌──────────┐
+│ mininet  │ IP: 172.x.x.3
+└────┬─────┘
+     │
+     └─────► Connects to onos:6653 (OpenFlow)
+
+┌──────────┐
+│  raven   │ IP: 172.x.x.4
+└────┬─────┘
+     │
+     └─────► Connects to onos:8181 (REST API)
+
+
+File Volumes
+============
+
+Host Machine                    Container
+─────────────────────────────────────────────
+./topologies/                → /topologies (mininet)
+  ├─ simple_topology.py
+  ├─ tree_topology.py
+  ├─ raven_test_topology.py
+  └─ custom_topology.py
+
+./raven-controller/          → /app (raven)
+  ├─ raven_controller.py
+  └─ requirements.txt
+
+/lib/modules                 → /lib/modules (mininet)
+  (for kernel modules)
+
+onos-data (volume)           → /root/onos (onos)
+  (persistent ONOS data)
+
+
+Key Ports
+=========
+
+8181  → ONOS Web GUI & REST API
+8101  → ONOS SSH/CLI
+6653  → OpenFlow Controller
+6640  → OVSDB
+
+
+Environment Variables
+=====================
+
+RAVEN Container:
+  ONOS_URL=http://onos:8181
+  ONOS_USER=onos
+  ONOS_PASSWORD=rocks
+
+ONOS Container:
+  ONOS_APPS=openflow,fwd,proxyarp,mobility

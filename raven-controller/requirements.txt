@@ -1,0 +1,4 @@
+requests==2.31.0
+flask==3.0.0
+networkx==3.2.1
+numpy==1.26.2

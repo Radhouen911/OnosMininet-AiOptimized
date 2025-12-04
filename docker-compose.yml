@@ -1,0 +1,57 @@
+version: "3.8"
+
+services:
+  onos:
+    image: onosproject/onos:2.7.0
+    container_name: onos
+    ports:
+      - "8181:8181" # REST API and GUI
+      - "8101:8101" # SSH/CLI
+      - "6653:6653" # OpenFlow
+      - "6640:6640" # OVSDB
+    environment:
+      - ONOS_APPS=openflow,fwd,proxyarp,mobility,gui2
+    networks:
+      - onos-mininet-net
+    volumes:
+      - onos-data:/root/onos
+    restart: unless-stopped
+
+  mininet:
+    build:
+      context: ./mininet
+      dockerfile: Dockerfile
+    container_name: mininet
+    privileged: true
+    networks:
+      - onos-mininet-net
+    volumes:
+      - ./topologies:/topologies
+      - /lib/modules:/lib/modules
+    stdin_open: true
+    tty: true
+    depends_on:
+      - onos
+    command: /bin/bash
+
+  raven-controller:
+    build:
+      context: ./raven-controller
+      dockerfile: Dockerfile
+    container_name: raven-controller
+    networks:
+      - onos-mininet-net
+    depends_on:
+      - onos
+    environment:
+      - ONOS_URL=http://onos:8181
+      - ONOS_USER=onos
+      - ONOS_PASSWORD=rocks
+    restart: unless-stopped
+
+networks:
+  onos-mininet-net:
+    driver: bridge
+
+volumes:
+  onos-data:
