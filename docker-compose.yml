@@ -1,20 +1,16 @@
-version: "3.8"
+# Docker Compose file for ONOS + Mininet + RAVEN
 
 services:
   onos:
-    image: onosproject/onos:2.7.0
+    image: onosproject/onos:2.5.1
     container_name: onos
     ports:
       - "8181:8181" # REST API and GUI
-      - "8101:8101" # SSH/CLI
       - "6653:6653" # OpenFlow
-      - "6640:6640" # OVSDB
     environment:
-      - ONOS_APPS=openflow,fwd,proxyarp,mobility,gui2
+      - ONOS_APPS=openflow,fwd,proxyarp,gui
     networks:
       - onos-mininet-net
-    volumes:
-      - onos-data:/root/onos
     restart: unless-stopped
 
   mininet:
@@ -32,7 +28,13 @@ services:
     tty: true
     depends_on:
       - onos
-    command: /bin/bash
+    command: >
+      bash -c "service openvswitch-switch start && 
+               echo 'OVS started successfully' && 
+               echo 'Ready to run topologies!' && 
+               echo 'Use: docker exec -it mininet bash' && 
+               echo 'Then: mn --custom /topologies/diamond4.py --topo diamond4 --controller remote,ip=onos,port=6653' && 
+               tail -f /dev/null"
 
   raven-controller:
     build:
@@ -48,6 +50,10 @@ services:
       - ONOS_USER=onos
       - ONOS_PASSWORD=rocks
     restart: unless-stopped
+    command: >
+      bash -c "echo 'Waiting for ONOS to start...' && 
+               sleep 60 && 
+               python raven_controller.py"
 
 networks:
   onos-mininet-net:
